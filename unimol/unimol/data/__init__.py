@@ -39,4 +39,6 @@ from .from_str_dataset import FromStrLabelDataset
 from .lmdb_dataset import LMDBDataset
 from .prepend_and_append_2d_dataset import PrependAndAppend2DDataset
 
+from .deepchem_tokenized_dataset import DeepchemTokenizedDataset
+
 __all__ = []
