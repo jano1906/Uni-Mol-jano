@@ -32,6 +32,7 @@ from unimol.data import (
     Add2DConformerDataset,
     LMDBDataset,
     TTADataset,
+    DeepchemTokenizedDataset
 )
 from unicore.tasks import UnicoreTask, register_task
 
@@ -174,6 +175,10 @@ class UniMolTask(UnicoreTask):
             token_dataset = TokenizeDataset(
                 token_dataset, self.dictionary, max_seq_len=self.args.max_seq_len
             )
+            
+            joint_learning_dataset = KeyDataset(raw_dataset, "smi")
+            joint_learning_dataset = DeepchemTokenizedDataset(joint_learning_dataset, max_seq_len=self.args.max_seq_len)
+            
             coord_dataset = KeyDataset(dataset, "coordinates")
             expand_dataset = MaskPointsDataset(
                 token_dataset,
@@ -196,7 +201,7 @@ class UniMolTask(UnicoreTask):
             encoder_token_dataset = KeyDataset(expand_dataset, "atoms")
             encoder_target_dataset = KeyDataset(expand_dataset, "targets")
             encoder_coord_dataset = KeyDataset(expand_dataset, "coordinates")
-
+            
             src_dataset = PrependAndAppend(
                 encoder_token_dataset, self.dictionary.bos(), self.dictionary.eos()
             )
@@ -214,6 +219,10 @@ class UniMolTask(UnicoreTask):
                 "src_tokens": RightPadDataset(
                     src_dataset,
                     pad_idx=self.dictionary.pad(),
+                ),
+                "joint_learning_tokens": RightPadDataset(
+                    PrependAndAppend(joint_learning_dataset, joint_learning_dataset.tokenizer.bos_token_id, joint_learning_dataset.tokenizer.eos_token_id),
+                    pad_idx=joint_learning_dataset.tokenizer.pad_token_id,
                 ),
                 "src_coord": RightPadDatasetCoord(
                     encoder_coord_dataset,

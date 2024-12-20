@@ -12,6 +12,7 @@ from unicore.modules import LayerNorm, init_bert_params
 from .transformer_encoder_with_pair import TransformerEncoderWithPair
 from typing import Dict, Any, List
 
+from unimol.data.deep_chem_tokenizer.deepchem_tokenizer import SmilesTokenizer
 
 logger = logging.getLogger(__name__)
 
@@ -29,6 +30,11 @@ class UniMolModel(BaseUnicoreModel):
             type=int,
             metavar="H",
             help="encoder embedding dimension",
+        )
+        parser.add_argument(
+            "--joint-learning",
+            action="store_true",
+            help="Whether to train smiles decoder on the latent",
         )
         parser.add_argument(
             "--encoder-ffn-embed-dim",
@@ -158,6 +164,15 @@ class UniMolModel(BaseUnicoreModel):
                 weight=None,
             )
 
+        if self.args.joint_learning:
+            self.joint_learning_tokenizer = SmilesTokenizer()
+            self.joint_learning_embed = nn.Embedding(self.joint_learning_tokenizer.vocab_size, args.encoder_embed_dim, self.joint_learning_tokenizer.pad_token_id)
+            self.joint_learning_decoder = nn.TransformerDecoder(
+                nn.TransformerDecoderLayer(args.encoder_embed_dim, 8, 4*args.encoder_embed_dim, activation=nn.GELU(), batch_first=True, norm_first=True),
+                4,
+            )
+            self.joint_learning_cls = nn.Linear(args.encoder_embed_dim, self.joint_learning_tokenizer.vocab_size)
+                
         K = 128
         n_edge_type = len(dictionary) * len(dictionary)
         self.gbf_proj = NonLinearHead(
@@ -190,9 +205,10 @@ class UniMolModel(BaseUnicoreModel):
         encoder_masked_tokens=None,
         features_only=False,
         classification_head_name=None,
+        *,
+        joint_learning_tokens = None,
         **kwargs
     ):
-
         if classification_head_name is not None:
             features_only = True
 
@@ -224,6 +240,21 @@ class UniMolModel(BaseUnicoreModel):
         encoder_coord = None
 
         if not features_only:
+            if self.args.joint_learning:
+                joint_learning_tokens_in = joint_learning_tokens[:,:-1]
+                joint_learning_tokens_tgt = joint_learning_tokens[:,1:]
+                joint_learning_x = self.joint_learning_embed(joint_learning_tokens_in)
+                global_rep = encoder_rep[:,[0],:]
+                pad_mask = joint_learning_tokens_in==0
+                joint_learning_tokens_out = self.joint_learning_decoder.forward(
+                    tgt=joint_learning_x, #??????
+                    memory=global_rep,
+                    tgt_key_padding_mask=pad_mask,
+                    tgt_is_causal=True,
+                    tgt_mask=nn.Transformer.generate_square_subsequent_mask(joint_learning_x.shape[1], device=joint_learning_x.device, dtype=joint_learning_x.dtype))
+                joint_learning_tokens_pred = self.joint_learning_cls(joint_learning_tokens_out)
+                joint_learning_loss = F.cross_entropy(joint_learning_tokens_pred.flatten(0,-2), joint_learning_tokens_tgt.flatten(), ignore_index=self.joint_learning_tokenizer.pad_token_id)
+
             if self.args.masked_token_loss > 0:
                 logits = self.lm_head(encoder_rep, encoder_masked_tokens)
             if self.args.masked_coord_loss > 0:
@@ -257,6 +288,7 @@ class UniMolModel(BaseUnicoreModel):
                 encoder_coord,
                 x_norm,
                 delta_encoder_pair_rep_norm,
+                joint_learning_loss if self.args.joint_learning else None
             )         
 
     def register_classification_head(

@@ -28,6 +28,7 @@ class UniMolLoss(UnicoreLoss):
             encoder_coord,
             x_norm,
             delta_encoder_pair_rep_norm,
+            joint_learning_loss,
         ) = model(**sample[input_key], encoder_masked_tokens=masked_tokens)
         target = sample[target_key]["tokens_target"]
         if masked_tokens is not None:
@@ -51,6 +52,9 @@ class UniMolLoss(UnicoreLoss):
             "masked_token_hit": masked_hit.data,
             "masked_token_cnt": masked_cnt,
         }
+        if joint_learning_loss is not None:
+            loss += joint_learning_loss * 1.
+            logging_output["joint_learning_loss"] = joint_learning_loss.item()
 
         if encoder_coord is not None:
             # real = mask + delta
@@ -98,7 +102,10 @@ class UniMolLoss(UnicoreLoss):
         bsz = sum(log.get("bsz", 0) for log in logging_outputs)
         sample_size = sum(log.get("sample_size", 0) for log in logging_outputs)
         seq_len = sum(log.get("seq_len", 0) for log in logging_outputs)
+        joint_learning_loss_sum = sum(log.get("joint_learning_loss", 0) for log in logging_outputs)
+        
         metrics.log_scalar("loss", loss_sum / sample_size, sample_size, round=3)
+        metrics.log_scalar("joint_learning_loss", joint_learning_loss_sum / sample_size, sample_size, round=3)
         metrics.log_scalar("seq_len", seq_len / bsz, 1, round=3)
 
         masked_loss = sum(log.get("masked_token_loss", 0) for log in logging_outputs)
